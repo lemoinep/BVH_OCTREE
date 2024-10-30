@@ -321,7 +321,6 @@ struct OctreeNode {
 };
 
 
-
 __device__ OctreeAABB computeBoundingBox(OctreeTriangle* triangles, int triangleCount) {
     OctreeAABB bbox;
     bbox.min = make_float3(FLT_MAX, FLT_MAX, FLT_MAX);
@@ -363,14 +362,6 @@ __device__ int distributeTriangles(const OctreeAABB& bbox, OctreeTriangle* trian
 
     return childCount;
 }
-
-
-
-
-
-
-
-
 
 
 
@@ -539,7 +530,7 @@ __device__ bool traverseOctreeIterative(OctreeNode* root, const OctreeRay& ray, 
                         hit = true;
                         if (isView) printf("Hit triangle at t = %f\n", t);
                         hr.hitResults = i;
-                        hr.distanceResults=fabs(t);  //distance
+                        hr.distanceResults=fabs(t);  
                         hr.intersectionPoint=intersectionPointT;
                         hr.idResults=int(currentNode->triangles[i].id);
                     }
@@ -574,8 +565,6 @@ __device__ bool traverseOctreeIterative(OctreeNode* root, const OctreeRay& ray, 
 }
 
 
-
-
 __device__ OctreeRay generateOctreeRay(int idx,int width,int height) {
     float3 origin = make_float3(0.0f, 0.0f, 2.0f); 
     float3 direction = make_float3(
@@ -585,7 +574,6 @@ __device__ OctreeRay generateOctreeRay(int idx,int width,int height) {
     );
     return {origin, normalize(direction)}; 
 }
-
 
 
 __global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitOctreeRay* d_HitRays,int width,int height) 
@@ -600,14 +588,6 @@ __global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitOctreeRay* d_Hi
         float tMin = INFINITY;
         OctreeTriangle hitTriangle;
         bool hit = traverseOctreeIterative(d_octree,ray, tMin, hitTriangle,d_HitRays[idx]);
-
-        if (hit) {
-            printf("Hit dist :  %f\n", tMin);
-        } 
-        else 
-        {
-            printf("No hit\n");
-        }
 }
 
 
@@ -636,7 +616,7 @@ __device__ void buildOctreeByLevel(OctreeNode* root, OctreeTriangle* triangles, 
     root->triangleCount = triangleCount;
     root->isLeaf = false;
 
-    bool isView=true;
+    bool isView=true; isView=false;
  
     if (isView) {
         printf("root box min <%f %f %f>\n", root->bbox.min.x, root->bbox.min.y, root->bbox.min.z);
@@ -719,8 +699,6 @@ __device__ void buildOctreeByLevel(OctreeNode* root, OctreeTriangle* triangles, 
         nextLevelSize = 0;
     }
 }
-
-
 
 
 __global__ void buildOctreeKernel(OctreeNode* node, OctreeTriangle* triangles, int triangleCount, int depth) {
@@ -820,42 +798,11 @@ bool loadOBJOctreeTriangle(const std::string& filename, thrust::host_vector<Octr
     return true;
 }
 
-void Test001()
-{
-    std::string filename;
-    filename = "Triangle2Cube.obj";
-    filename = "Test.obj";
-
-    int width=3;
-    int height=width;
-    int triangleCount = 5; 
-
-    thrust::host_vector<OctreeTriangle> h_triangles(triangleCount);
-    h_triangles[0] = { make_float3(-1.0f, -1.0f, -5.0f), make_float3(1.0f, -1.0f, -5.0f), make_float3(0.0f, 1.0f, -5.0f),0 };
-    h_triangles[1] = { make_float3(-2.0f, -2.0f, -6.0f), make_float3(2.0f, -2.0f, -6.0f), make_float3(0.0f, 2.0f, -6.0f),1 };
-    h_triangles[2] = { make_float3(-1.5f, -1.5f, -4.0f), make_float3(1.5f, -1.5f, -4.0f), make_float3(0.0f, 1.5f, -4.0f),2 };
-    h_triangles[3] = { make_float3(-1.2f, -1.2f, -7.0f), make_float3(1.2f, -1.2f, -7.0f), make_float3(0.0f, 1.2f, -7.0f),3};
-    h_triangles[4] = { make_float3(-1.8f, -1.8f, -8.0f), make_float3(1.8f, -1.8f, -8.0f), make_float3(0.0f, 1.8f, -8.0f),4 };
-
-    triangleCount = h_triangles.size();
-    std::cout<<"Nb Triangles="<<triangleCount<<"\n";
-
-    // Copy Triangle host to device
-    OctreeTriangle* d_triangles;
-    hipMalloc(&d_triangles, sizeof(OctreeTriangle) * triangleCount);
-    hipMemcpy(d_triangles, h_triangles.data(), sizeof(OctreeTriangle) * triangleCount, hipMemcpyHostToDevice);
-
-    buildPicturRayTracing(d_triangles, triangleCount, width, height);
-
-    hipFree(d_triangles);
-}
 
 
 void Test002()
-{
-     
+{     
     std::string filename;
-    filename = "Triangle2Cube.obj";
     filename = "Test.obj";
 
     int width=3;
@@ -879,12 +826,8 @@ void Test002()
 
 
 int main(){
-
-    Test001();
-    std::cout<<"=========================================\n";
     Test002();
-    std::cout<<"=========================================\n";
-    
+    std::cout << "[INFO]: WELL DONE :-) FINISHED !"<<"\n";
     return 0;
 }
 
