@@ -231,7 +231,7 @@ float3 toFloat3(const Vec3& v) { return {v.x, v.y, v.z}; }
 
 
 
-struct Triangle {
+struct OctreeTriangle {
     float3 vertices[3];
     int id;
 
@@ -241,20 +241,26 @@ struct Triangle {
 };
 
 
-struct Ray {
+struct OctreeRay {
     float3 origin;
     float3 direction;
 };
 
 
+struct HitOctreeRay {
+    float closestT;
+    int closestTriangle;
+    int closesIntersectionId;
+    float3 closestIntersectionPoint;
+};
 
 
 
-struct AABB {
+struct OctreeAABB {
     float3 min;
     float3 max;
 
-    __device__ bool intersect(const Ray& ray) const {
+    __device__ bool intersect(const OctreeRay& ray) const {
         
         float3 invDir = make_float3(1.0f,1.0f,1.0f) / ray.direction;
         float tmin = (min.x - ray.origin.x) * invDir.x;
@@ -292,10 +298,32 @@ struct AABB {
     }
 };
 
+struct OctreeNode {
+    OctreeAABB bbox;
+    OctreeNode* children[8];
+    int triangleCount;
+    OctreeTriangle triangles[MAX_TRIANGLES_PER_NODE];
+    bool isLeaf;
+
+    __device__ OctreeNode() : triangleCount(0), isLeaf(false) {
+        for (int i = 0; i < 8; ++i) {
+            children[i] = nullptr;
+        }
+    }
+
+    __device__ ~OctreeNode() {
+        for (int i = 0; i < 8; ++i) {
+            if (children[i] != nullptr) {
+                delete children[i];
+            }
+        }
+    }
+};
 
 
-__device__ AABB computeBoundingBox(Triangle* triangles, int triangleCount) {
-    AABB bbox;
+
+__device__ OctreeAABB computeBoundingBox(OctreeTriangle* triangles, int triangleCount) {
+    OctreeAABB bbox;
     bbox.min = make_float3(FLT_MAX, FLT_MAX, FLT_MAX);
     bbox.max = make_float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 
@@ -309,13 +337,13 @@ __device__ AABB computeBoundingBox(Triangle* triangles, int triangleCount) {
 }
 
 
-__device__ int distributeTriangles(const AABB& bbox, Triangle* triangles, int triangleCount, Triangle* childTriangles, int octantIndex) {
+__device__ int distributeTriangles(const OctreeAABB& bbox, OctreeTriangle* triangles, int triangleCount, OctreeTriangle* childTriangles, int octantIndex) {
     float3 midPoint = 0.5f * (bbox.min + bbox.max);
     int childCount = 0;
 
     for (int i = 0; i < triangleCount; ++i) {
-        Triangle& tri = triangles[i];
-        AABB triBBox = computeBoundingBox(&tri, 1); 
+        OctreeTriangle& tri = triangles[i];
+        OctreeAABB triBBox = computeBoundingBox(&tri, 1); 
 
         // Check if the triangle is in the corresponding octant
         bool inOctant = true;
@@ -336,120 +364,17 @@ __device__ int distributeTriangles(const AABB& bbox, Triangle* triangles, int tr
     return childCount;
 }
 
- 
-
-
-struct OctreeNode {
-    AABB bbox;
-    OctreeNode* children[8];
-    int triangleCount;
-    Triangle triangles[MAX_TRIANGLES_PER_NODE];
-    bool isLeaf;
-
-    __device__ OctreeNode() : triangleCount(0), isLeaf(false) {
-        for (int i = 0; i < 8; ++i) {
-            children[i] = nullptr;
-        }
-    }
-
-    __device__ ~OctreeNode() {
-        for (int i = 0; i < 8; ++i) {
-            if (children[i] != nullptr) {
-                delete children[i];
-            }
-        }
-    }
-};
 
 
 
-__device__ bool intersectRayWithTriangle(const Ray& ray, const Triangle& triangle,float& t,float3& intersectionPoint) {
-    float3 edge1 = triangle.vertices[1] - triangle.vertices[0];
-    float3 edge2 = triangle.vertices[2] - triangle.vertices[0];
-
-    float3 h = cross(ray.direction, edge2);
-    float a = dot(edge1, h);
-
-    if (a > -1e-8 && a < 1e-8) {
-        return false;
-    }
-
-    float f = 1.0f / a;
-    float3 s = ray.origin - triangle.vertices[0];
-    float u = f * dot(s, h);
-
-
-    if (u < 0.0f || u > 1.0f) {
-        return false;
-    }
-
-    float3 q = cross(s, edge1);
-    float v = f * dot(ray.direction, q);
-
-
-    if (v < 0.0f || u + v > 1.0f) {
-        return false;
-    }
-
-    t = f * dot(edge2, q);
-
-    if (t > 1e-6) {
-        intersectionPoint = ray.origin + t * ray.direction;
-    }
-    else
-    {
-        intersectionPoint =make_float3(INFINITY, INFINITY, INFINITY);
-    }
-
-    return t > 1e-8; 
-}
 
 
 
-struct HitRay {
-    float closestT;
-    int closestTriangle;
-    int closesIntersectionId;
-    float3 closestIntersectionPoint;
-};
-
-/*
-__device__ bool intersectRayWithOctree(const Ray& ray, const OctreeNode* node,HitRay& hr) {
-
-    if (node->isLeaf) {
-        float t;
-        float3 intersectionPointT;
-        for (int i = 0; i < node->triangleCount; ++i) {
-            if (intersectRayWithTriangle(ray, node->triangles[i],t,intersectionPointT)) {
-                if (t<hr.closestT)
-                {
-                    hr.closestTriangle = i;
-                    hr.closestT=fabs(t);  //distance
-                    hr.closestIntersectionPoint=intersectionPointT;
-                    hr.closesIntersectionId=int(node->triangles[i].id);
-                    if (hr.closesIntersectionId<0) printf("ERRORS\n");
-                }
-                return true; 
-            }
-        }
-        return false;
-    }
-
-    bool hit = false;
-    for (int i = 0; i < 8; ++i) {
-        if (node->children[i] != nullptr && intersectRayWithOctree(ray, node->children[i],hr)) {
-            hit = true;
-        }
-    }
-
-    return hit;
-}
-*/
 
 
-//*********
 
-__device__ bool rayAABBIntersection(const Ray& ray, const AABB& aabb) {
+
+__device__ bool rayAABBIntersection(const OctreeRay& ray, const OctreeAABB& aabb) {
     float3 invDir = make_float3(1.0f / ray.direction.x, 1.0f / ray.direction.y, 1.0f / ray.direction.z);
     float3 tMin = (aabb.min - ray.origin) * invDir;
     float3 tMax = (aabb.max - ray.origin) * invDir;
@@ -469,7 +394,7 @@ __device__ bool rayAABBIntersection(const Ray& ray, const AABB& aabb) {
     return tNear <= tFar && tFar > 0;
 }
 
-__device__ bool rayTriangleIntersection(const Ray& ray, const Triangle& triangle, float& t,float3& intersectionPoint) {
+__device__ bool rayTriangleIntersection(const OctreeRay& ray, const OctreeTriangle& triangle, float& t,float3& intersectionPoint) {
     float3 edge1 = triangle.vertices[1] - triangle.vertices[0];
     float3 edge2 = triangle.vertices[2] - triangle.vertices[0];
 
@@ -511,11 +436,7 @@ __device__ bool rayTriangleIntersection(const Ray& ray, const Triangle& triangle
 }
 
 
-
-
-
-
-__device__ bool rayAABBIntersection(const Ray& ray, const AABB& aabb, float& tEntry, float& tExit) {
+__device__ bool rayAABBIntersection(const OctreeRay& ray, const OctreeAABB& aabb, float& tEntry, float& tExit) {
     float3 invDir = make_float3(1.0f / ray.direction.x, 1.0f / ray.direction.y, 1.0f / ray.direction.z);
     float3 tMin = (aabb.min - ray.origin) * invDir;
     float3 tMax = (aabb.max - ray.origin) * invDir;
@@ -535,7 +456,7 @@ __device__ bool rayAABBIntersection(const Ray& ray, const AABB& aabb, float& tEn
     return tEntry <= tExit && tExit > 0;
 }
 
-__device__ bool rayAABBIntersection(const Ray& ray, const AABB& aabb, float& tMin) {
+__device__ bool rayAABBIntersection(const OctreeRay& ray, const OctreeAABB& aabb, float& tMin) {
     float3 invDir = make_float3(1.0f / ray.direction.x, 1.0f / ray.direction.y, 1.0f / ray.direction.z);
     float3 t0 = (aabb.min - ray.origin) * invDir;
     float3 t1 = (aabb.max - ray.origin) * invDir;
@@ -563,9 +484,8 @@ __device__ bool rayAABBIntersection(const Ray& ray, const AABB& aabb, float& tMi
 
 
 
-__device__ bool traverseOctreeIterative(OctreeNode* root, const Ray& ray, float& tMin, Triangle& hitTriangle,HitRay& hr) {
+__device__ bool traverseOctreeIterative(OctreeNode* root, const OctreeRay& ray, float& tMin, OctreeTriangle& hitTriangle,HitOctreeRay& hr) {
     
-
     bool isView=true; isView=false;
     
     if (isView) printf("[traverseOctree]\n");
@@ -656,7 +576,7 @@ __device__ bool traverseOctreeIterative(OctreeNode* root, const Ray& ray, float&
 
 
 
-__device__ Ray generateRay(int idx,int width,int height) {
+__device__ OctreeRay generateOctreeRay(int idx,int width,int height) {
     float3 origin = make_float3(0.0f, 0.0f, 2.0f); 
     float3 direction = make_float3(
         (idx % width) / (float) width - 0.5f, 
@@ -668,17 +588,17 @@ __device__ Ray generateRay(int idx,int width,int height) {
 
 
 
-__global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitRay* d_HitRays,int width,int height) 
+__global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitOctreeRay* d_HitRays,int width,int height) 
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= width * height) return; 
-        Ray ray = generateRay(idx,width,height);        
+        OctreeRay ray = generateOctreeRay(idx,width,height);        
         d_HitRays[idx].closestTriangle = -1;
         d_HitRays[idx].closestT = INFINITY; //distance
         d_HitRays[idx].closestIntersectionPoint=make_float3(INFINITY, INFINITY, INFINITY);
         d_HitRays[idx].closesIntersectionId = -1;
         float tMin = INFINITY;
-        Triangle hitTriangle;
+        OctreeTriangle hitTriangle;
         bool hit = traverseOctreeIterative(d_octree,ray, tMin, hitTriangle,d_HitRays[idx]);
 
         if (hit) {
@@ -691,18 +611,8 @@ __global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitRay* d_HitRays,
 }
 
 
-
-struct OctreeNodeInfo {
-    OctreeNode* node;
-    Triangle* triangles;
-    int triangleCount;
-    int depth;
-};
-
-
-
-__device__ AABB computeChildBBox(const AABB& parentBBox, int childIndex) {
-    AABB childBBox;
+__device__ OctreeAABB computeChildBBox(const OctreeAABB& parentBBox, int childIndex) {
+    OctreeAABB childBBox;
     float3 center = make_float3(
         (parentBBox.min.x + parentBBox.max.x) * 0.5f,
         (parentBBox.min.y + parentBBox.max.y) * 0.5f,
@@ -720,7 +630,7 @@ __device__ AABB computeChildBBox(const AABB& parentBBox, int childIndex) {
 }
 
 
-__device__ void buildOctreeByLevel(OctreeNode* root, Triangle* triangles, int triangleCount) {
+__device__ void buildOctreeByLevel(OctreeNode* root, OctreeTriangle* triangles, int triangleCount) {
     // Initialize the root
     root->bbox = computeBoundingBox(triangles, triangleCount);
     root->triangleCount = triangleCount;
@@ -762,7 +672,7 @@ __device__ void buildOctreeByLevel(OctreeNode* root, Triangle* triangles, int tr
             // Subdivide the node
             for (int j = 0; j < 8; j++) {
                 node->children[j] = new OctreeNode();
-                Triangle childTriangles[MAX_TRIANGLES_PER_NODE];
+                OctreeTriangle childTriangles[MAX_TRIANGLES_PER_NODE];
                 int childCount = distributeTriangles(node->bbox, triangles, node->triangleCount, childTriangles, j);
                 
                 if (childCount > 0) {
@@ -813,12 +723,12 @@ __device__ void buildOctreeByLevel(OctreeNode* root, Triangle* triangles, int tr
 
 
 
-__global__ void buildOctreeKernel(OctreeNode* node, Triangle* triangles, int triangleCount, int depth) {
+__global__ void buildOctreeKernel(OctreeNode* node, OctreeTriangle* triangles, int triangleCount, int depth) {
     buildOctreeByLevel(node, triangles, triangleCount);
 }
 
 
-void buildPicturRayTracing(Triangle* triangles, int triangleCount, int width, int height) {
+void buildPicturRayTracing(OctreeTriangle* triangles, int triangleCount, int width, int height) {
 
     std::chrono::steady_clock::time_point t_begin_0,t_begin_1;
     std::chrono::steady_clock::time_point t_end_0,t_end_1;
@@ -836,8 +746,8 @@ void buildPicturRayTracing(Triangle* triangles, int triangleCount, int width, in
     t_end_0 = std::chrono::steady_clock::now();  
 
     int nbRay = width * height;
-    HitRay* d_HitRays;
-    hipMalloc(&d_HitRays, nbRay*sizeof(HitRay));
+    HitOctreeRay* d_HitRays;
+    hipMalloc(&d_HitRays, nbRay*sizeof(HitOctreeRay));
 
     t_begin_1 = std::chrono::steady_clock::now();  
     dim3 blockSize(256);
@@ -855,8 +765,8 @@ void buildPicturRayTracing(Triangle* triangles, int triangleCount, int width, in
 
     t_end_1 = std::chrono::steady_clock::now();  
 
-    std::vector<HitRay> h_HitRays(nbRay);    
-    hipMemcpy(h_HitRays.data(), d_HitRays, nbRay*sizeof(HitRay), hipMemcpyDeviceToHost);
+    std::vector<HitOctreeRay> h_HitRays(nbRay);    
+    hipMemcpy(h_HitRays.data(), d_HitRays, nbRay*sizeof(HitOctreeRay), hipMemcpyDeviceToHost);
 
     std::cout<<"\n";
     std::cout<<"Debriefing\n";
@@ -886,7 +796,7 @@ void buildPicturRayTracing(Triangle* triangles, int triangleCount, int width, in
 
 
 
-bool loadOBJTriangle(const std::string& filename, thrust::host_vector<Triangle>& triangles,const int& id) {
+bool loadOBJOctreeTriangle(const std::string& filename, thrust::host_vector<OctreeTriangle>& triangles,const int& id) {
     std::ifstream file(filename);
     if (!file.is_open()) return false;
 
@@ -920,7 +830,7 @@ void Test001()
     int height=width;
     int triangleCount = 5; 
 
-    thrust::host_vector<Triangle> h_triangles(triangleCount);
+    thrust::host_vector<OctreeTriangle> h_triangles(triangleCount);
     h_triangles[0] = { make_float3(-1.0f, -1.0f, -5.0f), make_float3(1.0f, -1.0f, -5.0f), make_float3(0.0f, 1.0f, -5.0f),0 };
     h_triangles[1] = { make_float3(-2.0f, -2.0f, -6.0f), make_float3(2.0f, -2.0f, -6.0f), make_float3(0.0f, 2.0f, -6.0f),1 };
     h_triangles[2] = { make_float3(-1.5f, -1.5f, -4.0f), make_float3(1.5f, -1.5f, -4.0f), make_float3(0.0f, 1.5f, -4.0f),2 };
@@ -931,9 +841,9 @@ void Test001()
     std::cout<<"Nb Triangles="<<triangleCount<<"\n";
 
     // Copy Triangle host to device
-    Triangle* d_triangles;
-    hipMalloc(&d_triangles, sizeof(Triangle) * triangleCount);
-    hipMemcpy(d_triangles, h_triangles.data(), sizeof(Triangle) * triangleCount, hipMemcpyHostToDevice);
+    OctreeTriangle* d_triangles;
+    hipMalloc(&d_triangles, sizeof(OctreeTriangle) * triangleCount);
+    hipMemcpy(d_triangles, h_triangles.data(), sizeof(OctreeTriangle) * triangleCount, hipMemcpyHostToDevice);
 
     buildPicturRayTracing(d_triangles, triangleCount, width, height);
 
@@ -952,15 +862,15 @@ void Test002()
     int height=width;
     int triangleCount = 5; 
 
-    thrust::host_vector<Triangle> h_triangles;
-    loadOBJTriangle("Test.obj", h_triangles,0);
+    thrust::host_vector<OctreeTriangle> h_triangles;
+    loadOBJOctreeTriangle("Test.obj", h_triangles,0);
     triangleCount = h_triangles.size();
     std::cout<<"Nb Triangles="<<triangleCount<<"\n";
 
     // Copy Triangle host to device
-    Triangle* d_triangles;
-    hipMalloc(&d_triangles, sizeof(Triangle) * triangleCount);
-    hipMemcpy(d_triangles, h_triangles.data(), sizeof(Triangle) * triangleCount, hipMemcpyHostToDevice);
+    OctreeTriangle* d_triangles;
+    hipMalloc(&d_triangles, sizeof(OctreeTriangle) * triangleCount);
+    hipMemcpy(d_triangles, h_triangles.data(), sizeof(OctreeTriangle) * triangleCount, hipMemcpyHostToDevice);
 
     buildPicturRayTracing(d_triangles, triangleCount, width, height);
 
