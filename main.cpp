@@ -248,10 +248,10 @@ struct OctreeRay {
 
 
 struct HitOctreeRay {
-    float closestT;
-    int closestTriangle;
-    int closesIntersectionId;
-    float3 closestIntersectionPoint;
+    float distanceResults;
+    int hitResults;
+    int idResults;
+    float3 intersectionPoint;
 };
 
 
@@ -538,10 +538,10 @@ __device__ bool traverseOctreeIterative(OctreeNode* root, const OctreeRay& ray, 
                         hitTriangle = currentNode->triangles[i];
                         hit = true;
                         if (isView) printf("Hit triangle at t = %f\n", t);
-                        hr.closestTriangle = i;
-                        hr.closestT=fabs(t);  //distance
-                        hr.closestIntersectionPoint=intersectionPointT;
-                        hr.closesIntersectionId=int(currentNode->triangles[i].id);
+                        hr.hitResults = i;
+                        hr.distanceResults=fabs(t);  //distance
+                        hr.intersectionPoint=intersectionPointT;
+                        hr.idResults=int(currentNode->triangles[i].id);
                     }
 
                 }
@@ -593,10 +593,10 @@ __global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitOctreeRay* d_Hi
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= width * height) return; 
         OctreeRay ray = generateOctreeRay(idx,width,height);        
-        d_HitRays[idx].closestTriangle = -1;
-        d_HitRays[idx].closestT = INFINITY; //distance
-        d_HitRays[idx].closestIntersectionPoint=make_float3(INFINITY, INFINITY, INFINITY);
-        d_HitRays[idx].closesIntersectionId = -1;
+        d_HitRays[idx].hitResults = -1;
+        d_HitRays[idx].distanceResults = INFINITY; //distance
+        d_HitRays[idx].intersectionPoint=make_float3(INFINITY, INFINITY, INFINITY);
+        d_HitRays[idx].idResults = -1;
         float tMin = INFINITY;
         OctreeTriangle hitTriangle;
         bool hit = traverseOctreeIterative(d_octree,ray, tMin, hitTriangle,d_HitRays[idx]);
@@ -773,13 +773,13 @@ void buildPicturRayTracing(OctreeTriangle* triangles, int triangleCount, int wid
     std::cout<<"\n";
     for (int i=0;i<nbRay;i++)
     {
-        //std::cout<<"["<<i<<"] "<<h_HitRays[i].closesIntersectionId<<"\n";
-        if (h_HitRays[i].closesIntersectionId!=-1)
+        //std::cout<<"["<<i<<"] "<<h_HitRays[i].idResults<<"\n";
+        if (h_HitRays[i].idResults!=-1)
         {
-            std::cout<<"["<<i<<"] "<<h_HitRays[i].closestTriangle<<" "
-            <<h_HitRays[i].closestT<<" "
-            <<h_HitRays[i].closesIntersectionId
-            <<" <"<<h_HitRays[i].closestIntersectionPoint.x<<","<<h_HitRays[i].closestIntersectionPoint.y<<","<<h_HitRays[i].closestIntersectionPoint.z<<">"
+            std::cout<<"["<<i<<"] "<<h_HitRays[i].hitResults<<" "
+            <<h_HitRays[i].distanceResults<<" "
+            <<h_HitRays[i].idResults
+            <<" <"<<h_HitRays[i].intersectionPoint.x<<","<<h_HitRays[i].intersectionPoint.y<<","<<h_HitRays[i].intersectionPoint.z<<">"
             <<"\n";
         }
     }
