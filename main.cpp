@@ -93,74 +93,6 @@ __host__ __device__
 float3 normalize(const float3& v);
 
 
-struct Vec3 {
-    float x, y, z;
-
-    __host__ __device__
-    Vec3 operator-(const Vec3& v) const {
-        return {x - v.x, y - v.y, z - v.z};
-    }
-
-    __host__ __device__
-    Vec3 operator+(const Vec3& v) const {
-        return {x + v.x, y + v.y, z + v.z};
-    }
-
-    __host__ __device__
-    Vec3 operator*(float scalar) const {
-        return {x * scalar, y * scalar, z * scalar};
-    }
-
-     __host__ __device__
-        Vec3 operator*(const Vec3& other) const {
-        return Vec3(x * other.x, y * other.y, z * other.z);
-    }
-
-    __host__ __device__
-    float dot(const Vec3& v) const {
-        return x * v.x + y * v.y + z * v.z;
-    }
-
-    __host__ __device__
-    Vec3 cross(const Vec3& v) const {
-        return {
-            y * v.z - z * v.y,
-            z * v.x - x * v.z,
-            x * v.y - y * v.x
-        };
-    }
-
-    __host__ __device__
-    Vec3 () : x(0), y(0), z(0) {}
-
-    __host__ __device__
-    Vec3 (float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
-
-    __host__ __device__
-    Vec3 init(float x, float y, float z) {
-        Vec3 v;
-        v.x = x;
-        v.y = y;
-        v.z = z;
-        return v;
-    }
-
-    __host__ __device__
-    Vec3 float3ToVec3(const float3& f) {
-        return Vec3(f.x, f.y, f.z);
-    }
-
-    __host__ __device__
-    void normalize() {
-        float length = sqrt(x * x + y * y + z * z);
-        if (length > 0) {
-            x /= length;
-            y /= length;
-            z /= length;
-        }
-    }
-};
-
 __device__ inline float3 elementwise_min(const float3& a, const float3& b) {
     return make_float3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z));
 }
@@ -209,25 +141,6 @@ void print_float3(const float3& v) {
 }
 
 
-__host__ __device__ Vec3 min(const Vec3& a, const Vec3& b) {
-	return Vec3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z));
-}
-
-__host__ __device__ Vec3 max(const Vec3& a, const Vec3& b) {
-	return Vec3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z));
-}
-
-
-__host__ __device__ Vec3 cross(const Vec3& a, const Vec3& b) {
-	return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-}
-
-__host__ __device__ float dot(const Vec3& a, const Vec3& b) {
-	return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-
-float3 toFloat3(const Vec3& v) { return {v.x, v.y, v.z}; }
 
 
 
@@ -589,6 +502,20 @@ __global__ void rayTracingKernelTraverse(OctreeNode* d_octree,HitOctreeRay* d_Hi
         OctreeTriangle hitTriangle;
         bool hit = traverseOctreeIterative(d_octree,ray, tMin, hitTriangle,d_HitRays[idx]);
 }
+
+__global__ void raytraceKernel(OctreeNode* d_octree,OctreeRay* d_rays,HitOctreeRay* d_HitRays,int numRays) 
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >=numRays) return;       
+        d_HitRays[idx].hitResults = -1;
+        d_HitRays[idx].distanceResults = INFINITY; //distance
+        d_HitRays[idx].intersectionPoint=make_float3(INFINITY, INFINITY, INFINITY);
+        d_HitRays[idx].idResults = -1;
+        float tMin = INFINITY;
+        OctreeTriangle hitTriangle;
+        bool hit = traverseOctreeIterative(d_octree,d_rays[idx], tMin, hitTriangle,d_HitRays[idx]);
+}
+
 
 
 __device__ OctreeAABB computeChildBBox(const OctreeAABB& parentBBox, int childIndex) {
